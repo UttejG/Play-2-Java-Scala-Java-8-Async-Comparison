@@ -211,9 +211,7 @@ common: &default_settings
     #Prevents specified exception classes from affecting error rate or Apdex score while still
     #reporting the errors to APM. Contains yaml pairs consisting of class_name and message, the
     #latter of which is optional and cannot be provided without an associated error class name
-    expected_classes:
-      -
-        class_name: "com.angieslist.common.service.version2.package$AuthenticationException"
+    # expected_classes:
 
   # Analytics Events are used for Histograms and Percentiles. Unaggregated data is collected
   # for each web transaction and sent to the server on harvest.
