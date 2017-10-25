@@ -1,8 +1,6 @@
 package controllers;
 
 import play.Logger;
-import play.libs.F;
-import play.libs.F.Function;
 import play.libs.ws.WS;
 import play.libs.ws.WSResponse;
 import play.mvc.Controller;
@@ -11,6 +9,8 @@ import play.mvc.Result;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
+import java.util.function.Function;
 
 import static java.lang.String.format;
 import static java.lang.System.out;
@@ -67,7 +67,7 @@ public class JavaController extends Controller {
     return f.apply(c);
   }
 
-  public static Result index() throws Throwable {
+  public Result index() throws Throwable {
     final Collection<String> loweredNames = map(lower, names);
     out.println(format("%s.map(lower) yields %s", names, loweredNames));
 
@@ -83,26 +83,26 @@ public class JavaController extends Controller {
     return ok(map(lower, "Hello World"));
   }
 
-  public static F.Promise<Result> proxy() {
-    final F.Promise<WSResponse> responsePromise = WS.url("http://example.com").get();
+  public CompletionStage<Result> proxy() {
+    final CompletionStage<WSResponse> responsePromise = WS.url("http://example.com").get();
 
     Logger.info("Before map");
-    final F.Promise<Result> resultPromise = responsePromise.map(
-        new Function<WSResponse, Result>() {
-          @Override
-          public Result apply(WSResponse wsResponse) {
-            Logger.info("Within map");
-            response().setContentType(wsResponse.getHeader("Content-Type"));
-            return ok(wsResponse.getBody());
-          }
-        }
+    final CompletionStage<Result> resultPromise = responsePromise.thenApplyAsync(
+            new Function<WSResponse, Result>() {
+              @Override
+              public Result apply(WSResponse wsResponse) {
+                Logger.info("Within map");
+                response().setContentType(wsResponse.getHeader("Content-Type"));
+                return ok(wsResponse.getBody());
+              }
+            }
     );
 
     Logger.info("After map");
     return resultPromise;
   }
 
-  public static F.Promise<Result> parallel() {
+  public CompletionStage<Result> parallel() {
     final long start = System.currentTimeMillis();
     final Function<WSResponse, Long> getLatency = new Function<WSResponse, Long>() {
       @Override
@@ -111,17 +111,17 @@ public class JavaController extends Controller {
       }
     };
 
-    F.Promise<Long> googleLatency = WS.url("http://google.com").get().map(getLatency);
-    F.Promise<Long> yahooLatency = WS.url("http://yahoo.com").get().map(getLatency);
+    CompletionStage<Long> googleLatency = WS.url("http://google.com").get().thenApplyAsync(getLatency);
+    CompletionStage<Long> yahooLatency = WS.url("http://yahoo.com").get().thenApplyAsync(getLatency);
 
-    return googleLatency.flatMap(new Function<Long, F.Promise<Result>>() {
+    return googleLatency.thenComposeAsync(new Function<Long, CompletionStage<Result>>() {
       @Override
-      public F.Promise<Result> apply(Long googleResponseTime) {
-        return yahooLatency.map(new Function<Long, Result>() {
+      public CompletionStage<Result> apply(Long googleResponseTime) {
+        return yahooLatency.thenApplyAsync(new Function<Long, Result>() {
           @Override
           public Result apply(Long yahooResponseTime) {
             return ok(format("Google response time:  %d; Yahoo response time:  %d",
-                             googleResponseTime, yahooResponseTime));
+                    googleResponseTime, yahooResponseTime));
           }
         });
       }
@@ -132,22 +132,22 @@ public class JavaController extends Controller {
     return "?bar=baz";
   }
 
-  public static F.Promise<Result> sequential() {
-    final F.Promise<WSResponse> foo = WS.url("http://www.foo.com").get();
+  public CompletionStage<Result> sequential() {
+    final CompletionStage<WSResponse> foo = WS.url("http://www.foo.com").get();
 
-    return foo.flatMap(new Function<WSResponse, F.Promise<Result>>() {
+    return foo.thenComposeAsync(new Function<WSResponse, CompletionStage<Result>>() {
       @Override
-      public F.Promise<Result> apply(WSResponse fooResponse) {
+      public CompletionStage<Result> apply(WSResponse fooResponse) {
         // Use data in fooResponse to build the second request
-        final F.Promise<WSResponse> bar = WS.url("http://www.bar.com/" + paramsFromFoo(fooResponse))
-            .get();
+        final CompletionStage<WSResponse> bar = WS.url("http://www.bar.com/" + paramsFromFoo(fooResponse))
+                .get();
 
-        return bar.map(new Function<WSResponse, Result>() {
+        return bar.thenApplyAsync(new Function<WSResponse, Result>() {
           @Override
           public Result apply(WSResponse barResponse) {
             // Now you can use barResponse and fooResponse to build a Result
             return ok(format("response from foo.com is %s & from bar.com is %s",
-                fooResponse.getStatusText(), barResponse.getStatusText()));
+                    fooResponse.getStatusText(), barResponse.getStatusText()));
           }
         });
       }
@@ -155,8 +155,8 @@ public class JavaController extends Controller {
   }
 
   // Handle Exceptions in Futures by logging them and returning a fallback value
-  private static <T> F.Promise<T> withErrorHandling(F.Promise<T> promise, T fallback) {
-    return promise.recover(new Function<Throwable, T>() {
+  private <T> CompletionStage<T> withErrorHandling(CompletionStage<T> promise, T fallback) {
+    return promise.exceptionally(new Function<Throwable, T>() {
       @Override
       public T apply(Throwable throwable) {
         Logger.error("Something went wrong!", throwable);
@@ -165,21 +165,21 @@ public class JavaController extends Controller {
     });
   }
 
-  public static F.Promise<Result> checkHostName(String hostName) {
+  public CompletionStage<Result> checkHostName(String hostName) {
     // try using "thisdomaindoesnotexist"
-    final F.Promise<String> myPromise = WS.url(format("http://www.%s.com", hostName)).get()
-        .map(new Function<WSResponse, String>() {
-          @Override
-          public String apply(WSResponse response) {
-            return response.getStatusText();
-          }
-        });
+    final CompletionStage<String> myPromise = WS.url(format("http://www.%s.com", hostName)).get()
+            .thenApplyAsync(new Function<WSResponse, String>() {
+              @Override
+              public String apply(WSResponse response) {
+                return response.getStatusText();
+              }
+            });
 
-    final F.Promise<String> myPromiseWithFallback = withErrorHandling(myPromise, "fallback value");
+    final CompletionStage<String> myPromiseWithFallback = withErrorHandling(myPromise, "fallback value");
 
     // str either contains the result of myFuture's async I/O or
     // "fallback value" if any Exception was thrown
-    return myPromiseWithFallback.map(new Function<String, Result>() {
+    return myPromiseWithFallback.thenApplyAsync(new Function<String, Result>() {
       @Override
       public Result apply(String s) {
         return ok(s);

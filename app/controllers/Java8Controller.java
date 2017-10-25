@@ -1,7 +1,6 @@
 package controllers;
 
 import play.Logger;
-import play.libs.F;
 import play.libs.ws.WS;
 import play.libs.ws.WSResponse;
 import play.mvc.Controller;
@@ -10,6 +9,7 @@ import play.mvc.Result;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -34,9 +34,9 @@ public class Java8Controller extends Controller {
   };
 
   private static final Function<String, Stream<Character>> explodeToStream =
-      str -> explode.apply(str).stream();
+          str -> explode.apply(str).stream();
 
-  public static Result index() {
+  public Result index() {
     final List<String> loweredNames = names.stream().map(lower).collect(Collectors.toList());
     out.println(format("%s.map(lower) yields %s", names, loweredNames));
 
@@ -44,21 +44,21 @@ public class Java8Controller extends Controller {
     out.println(format("%s.map(strlen) yields %s", names, lengthsOfNames));
 
     final List<List<Character>> explodedNames =
-        names.stream().map(explode).collect(Collectors.toList());
+            names.stream().map(explode).collect(Collectors.toList());
     out.println(format("%s.map(explode) yields %s", names, explodedNames));
 
     final List<Character> flattenedExplodedNames =
-        names.stream().flatMap(explodeToStream).collect(Collectors.toList());
+            names.stream().flatMap(explodeToStream).collect(Collectors.toList());
     out.println(format("%s.map(explodeToStream) yields %s", names, flattenedExplodedNames));
 
     return ok(Arrays.asList("Hello World").stream().map(lower).collect(Collectors.toList()).get(0));
   }
 
-  public static F.Promise<Result> proxy() {
-    final F.Promise<WSResponse> responsePromise = WS.url("http://example.com").get();
+  public CompletionStage<Result> proxy() {
+    final CompletionStage<WSResponse> responsePromise = WS.url("http://example.com").get();
 
     Logger.info("Before map");
-    final F.Promise<Result> resultPromise = responsePromise.map((wsResponse) -> {
+    final CompletionStage<Result> resultPromise = responsePromise.thenApplyAsync((wsResponse) -> {
       Logger.info("Within map");
       response().setContentType(wsResponse.getHeader("Content-Type"));
       return ok(wsResponse.getBody());
@@ -68,17 +68,17 @@ public class Java8Controller extends Controller {
     return resultPromise;
   }
 
-  public static F.Promise<Result> parallel() {
+  public CompletionStage<Result> parallel() {
     final long start = System.currentTimeMillis();
-    final F.Function<WSResponse, Long> getLatency = resp -> System.currentTimeMillis() - start;
+    final Function<WSResponse, Long> getLatency = resp -> System.currentTimeMillis() - start;
 
-    F.Promise<Long> googleLatency = WS.url("http://google.com").get().map(getLatency);
-    F.Promise<Long> yahooLatency = WS.url("http://yahoo.com").get().map(getLatency);
+    CompletionStage<Long> googleLatency = WS.url("http://google.com").get().thenApplyAsync(getLatency);
+    CompletionStage<Long> yahooLatency = WS.url("http://yahoo.com").get().thenApplyAsync(getLatency);
 
-    return googleLatency.flatMap(googleResponseTime ->
-            yahooLatency.map(yahooResponseTime ->
-                ok(format("Google response time:  %d; Yahoo response time:  %d",
-                    googleResponseTime, yahooResponseTime)))
+    return googleLatency.thenComposeAsync(googleResponseTime ->
+            yahooLatency.thenApplyAsync(yahooResponseTime ->
+                    ok(format("Google response time:  %d; Yahoo response time:  %d",
+                            googleResponseTime, yahooResponseTime)))
     );
   }
 
@@ -86,38 +86,38 @@ public class Java8Controller extends Controller {
     return "?bar=baz";
   }
 
-  public static F.Promise<Result> sequential() {
-    final F.Promise<WSResponse> foo = WS.url("http://www.foo.com").get();
+  public CompletionStage<Result> sequential() {
+    final CompletionStage<WSResponse> foo = WS.url("http://www.foo.com").get();
 
-    return foo.flatMap(fooResponse -> {
+    return foo.thenComposeAsync(fooResponse -> {
       // Use data in fooResponse to build the second request
-      final F.Promise<WSResponse> bar = WS.url("http://www.bar.com" + paramsFromFoo(fooResponse)).get();
+      final CompletionStage<WSResponse> bar = WS.url("http://www.bar.com" + paramsFromFoo(fooResponse)).get();
 
-      return bar.map(barResponse -> {
+      return bar.thenApplyAsync(barResponse -> {
         // Now you can use barResponse and fooResponse to build a Result
         return ok(format("response from foo.com is %s & from bar.com is %s",
-                         fooResponse.getStatusText(), barResponse.getStatusText()));
+                fooResponse.getStatusText(), barResponse.getStatusText()));
       });
     });
   }
 
   // Handle Exceptions in Futures by logging them and returning a fallback value
-  private static <T> F.Promise<T> withErrorHandling(F.Promise<T> promise, T fallback) {
-    return promise.recover(throwable -> {
+  private <T> CompletionStage<T> withErrorHandling(CompletionStage<T> promise, T fallback) {
+    return promise.exceptionally(throwable -> {
       Logger.error("Something went wrong!", throwable);
       return fallback;
     });
   }
 
-  public static F.Promise<Result> checkHostName(String hostName) {
+  public CompletionStage<Result> checkHostName(String hostName) {
     // try using "thisdomaindoesnotexist"
-    final F.Promise<String> myPromise = WS.url(format("http://www.%s.com", hostName)).get()
-        .map(response -> response.getStatusText());
+    final CompletionStage<String> myPromise = WS.url(format("http://www.%s.com", hostName)).get()
+            .thenApplyAsync(response -> response.getStatusText());
 
-    final F.Promise<String> myPromiseWithFallback = withErrorHandling(myPromise, "fallback value");
+    final CompletionStage<String> myPromiseWithFallback = withErrorHandling(myPromise, "fallback value");
 
     // str either contains the result of myFuture's async I/O or
     // "fallback value" if any Exception was thrown
-    return myPromiseWithFallback.map(s -> ok(s));
+    return myPromiseWithFallback.thenApplyAsync(s -> ok(s));
   }
 }
